@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Redundancy Removal System</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .subtitle {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .stats-panel {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            text-align: center;
+            transition: transform 0.3s ease;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+        }
+
+        .stat-value {
+            font-size: 2.5em;
+            font-weight: bold;
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+
+        .stat-label {
+            color: #666;
+            font-size: 0.9em;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+        }
+
+        @media (max-width: 1024px) {
+            .main-content {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .form-section, .data-section {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        h2 {
+            color: #667eea;
+            margin-bottom: 20px;
+            font-size: 1.8em;
+            border-bottom: 3px solid #667eea;
+            padding-bottom: 10px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #555;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 1em;
+            transition: border-color 0.3s ease;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .message-box {
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message-box.success {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+
+        .message-box.error {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+
+        .message-box.warning {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            color: #856404;
+        }
+
+        .message-box.duplicate {
+            background: #fff3cd;
+            border: 2px solid #ffc107;
+            color: #856404;
+        }
+
+        .duplicate-info {
+            margin-top: 10px;
+            padding: 10px;
+            background: rgba(255,255,255,0.5);
+            border-radius: 5px;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            flex: 1;
+            min-width: 120px;
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+
+        .btn-secondary:hover:not(:disabled) {
+            background: #5a6268;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(108, 117, 125, 0.4);
+        }
+
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+        }
+
+        .btn-danger:hover:not(:disabled) {
+            background: #c82333;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(220, 53, 69, 0.4);
+        }
+
+        .data-list {
+            max-height: 600px;
+            overflow-y: auto;
+        }
+
+        .data-list::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .data-list::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 10px;
+        }
+
+        .data-list::-webkit-scrollbar-thumb {
+            background: #667eea;
+            border-radius: 10px;
+        }
+
+        .empty-state {
+            text-align: center;
+            color: #999;
+            padding: 40px;
+            font-style: italic;
+        }
+
+        .data-card {
+            background: #f8f9fa;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 15px;
+            transition: all 0.3s ease;
+        }
+
+        .data-card:hover {
+            border-color: #667eea;
+            box-shadow: 0 2px 8px rgba(102, 126, 234, 0.2);
+        }
+
+        .data-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+
+        .data-id {
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        .data-status {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            text-transform: uppercase;
+        }
+
+        .data-status.verified {
+            background: #28a745;
+            color: white;
+        }
+
+        .data-status.unverified {
+            background: #6c757d;
+            color: white;
+        }
+
+        .data-body p {
+            margin-bottom: 8px;
+            line-height: 1.6;
+        }
+
+        .data-body strong {
+            color: #555;
+            margin-right: 5px;
+        }
+
+        .data-footer {
+            margin-top: 15px;
+            padding-top: 10px;
+            border-top: 1px solid #e0e0e0;
+        }
+
+        .data-footer small {
+            color: #999;
+            font-size: 0.85em;
+        }
+
+        @media (max-width: 768px) {
+            header h1 {
+                font-size: 1.8em;
+            }
+
+            .stats-panel {
+                grid-template-columns: 1fr;
+            }
+
+            .button-group {
+                flex-direction: column;
+            }
+
+            .btn {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>✅ Data Redundancy Removal System</h1>
+            <p class="subtitle">Backend-controlled validation and duplicate prevention</p>
+        </header>
+
+        <div class="stats-panel">
+            <div class="stat-card">
+                <div class="stat-value" id="totalEntries">0</div>
+                <div class="stat-label">Total Entries</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="uniqueEntries">0</div>
+                <div class="stat-label">Verified Unique</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="efficiency">100%</div>
+                <div class="stat-label">Efficiency</div>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="form-section">
+                <h2>Add New Entry</h2>
+                <form id="dataForm">
+                    <div class="form-group">
+                        <label for="name">Full Name *</label>
+                        <input type="text" id="name" name="name" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="email">Email Address *</label>
+                        <input type="email" id="email" name="email" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="phone">Phone Number *</label>
+                        <input type="tel" id="phone" name="phone" placeholder="+1234567890" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="address">Address</label>
+                        <input type="text" id="address" name="address">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="company">Company</label>
+                        <input type="text" id="company" name="company">
+                    </div>
+
+                    <div id="messageBox" class="message-box" style="display: none;"></div>
+
+                    <div class="button-group">
+                        <button type="button" class="btn btn-secondary" onclick="validateForm()">Check Duplicate</button>
+                        <button type="submit" class="btn btn-primary" id="submitBtn">Add Entry</button>
+                        <button type="button" class="btn btn-danger" onclick="clearDatabase()">Clear All</button>
+                    </div>
+                </form>
+            </div>
+
+            <div class="data-section">
+                <h2>Stored Data</h2>
+                <div id="dataList" class="data-list">
+                    <p class="empty-state">No entries yet. Add your first entry!</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Load data on page load
+        window.addEventListener('load', () => {
+            loadStats();
+            loadData();
+        });
+
+        function getFormData() {
+            return {
+                name: document.getElementById('name').value.trim(),
+                email: document.getElementById('email').value.trim(),
+                phone: document.getElementById('phone').value.trim(),
+                address: document.getElementById('address').value.trim(),
+                company: document.getElementById('company').value.trim()
+            };
+        }
+
+        async function validateForm() {
+            const formData = getFormData();
+            const messageBox = document.getElementById('messageBox');
+            const submitBtn = document.getElementById('submitBtn');
+
+            // Basic frontend validation
+            if (!formData.name || !formData.email || !formData.phone) {
+                messageBox.style.display = 'block';
+                messageBox.className = 'message-box error';
+                messageBox.innerHTML = '<strong>❌ Validation Error</strong><br>Please fill all required fields.';
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/validate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(formData)
+                });
+
+                const result = await response.json();
+                messageBox.style.display = 'block';
+
+                if (result.status === 'duplicate') {
+                    // DUPLICATE DETECTED - Show existing record
+                    messageBox.className = 'message-box duplicate';
+                    const record = result.duplicate_record;
+                    messageBox.innerHTML = `
+                        <strong>⚠️ Duplicate Detected!</strong><br>
+                        ${result.message}<br>
+                        <div class="duplicate-info">
+                            <strong>Existing Record:</strong><br>
+                            ID: ${record.id}<br>
+                            Name: ${record.name}<br>
+                            Email: ${record.email}<br>
+                            Phone: ${record.phone}<br>
+                            Added: ${new Date(record.timestamp).toLocaleString()}<br>
+                            Status: ${record.verified ? '✅ VERIFIED' : '❌ UNVERIFIED'}
+                        </div>
+                    `;
+                    submitBtn.disabled = true;
+                } else if (result.status === 'invalid') {
+                    // VALIDATION FAILED
+                    messageBox.className = 'message-box error';
+                    messageBox.innerHTML = '<strong>❌ Validation Failed</strong><br>' + result.errors.join('<br>');
+                    submitBtn.disabled = true;
+                } else if (result.status === 'unique') {
+                    // VALIDATION PASSED - No duplicate
+                    messageBox.className = 'message-box success';
+                    messageBox.innerHTML = '<strong>✅ Validation Passed!</strong><br>' + result.message;
+                    submitBtn.disabled = false;
+                } else {
+                    // UNEXPECTED STATUS
+                    messageBox.className = 'message-box error';
+                    messageBox.innerHTML = '<strong>⚠️ Unknown Status</strong><br>Please try again.';
+                    submitBtn.disabled = true;
+                }
+            } catch (error) {
+                messageBox.style.display = 'block';
+                messageBox.className = 'message-box error';
+                messageBox.innerHTML = '<strong>Error:</strong> ' + error.message;
+                submitBtn.disabled = true;
+            }
+        }
+
+        document.getElementById('dataForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = getFormData();
+            const messageBox = document.getElementById('messageBox');
+            const submitBtn = document.getElementById('submitBtn');
+
+            // Basic validation
+            if (!formData.name || !formData.email || !formData.phone) {
+                messageBox.style.display = 'block';
+                messageBox.className = 'message-box error';
+                messageBox.innerHTML = '<strong>❌ Error</strong><br>Please fill all required fields.';
+                return;
+            }
+
+            submitBtn.disabled = true;
+
+            try {
+                const response = await fetch('/api/add', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(formData)
+                });
+
+                const result = await response.json();
+                messageBox.style.display = 'block';
+
+                if (result.status === 'created') {
+                    // NEW RECORD CREATED
+                    messageBox.className = 'message-box success';
+                    const record = result.record;
+                    messageBox.innerHTML = `
+                        <strong>✅ Success!</strong> New record created.<br>
+                        <strong>ID:</strong> ${record.id}<br>
+                        <strong>Status:</strong> ${record.verified ? '✅ VERIFIED' : '❌ UNVERIFIED'}<br>
+                        ${result.message}
+                    `;
+                    document.getElementById('dataForm').reset();
+                    loadStats();
+                    loadData();
+                    submitBtn.disabled = false;
+                } else if (result.status === 'duplicate') {
+                    // DUPLICATE - NO NEW RECORD
+                    messageBox.className = 'message-box duplicate';
+                    const record = result.record;
+                    messageBox.innerHTML = `
+                        <strong>⚠️ Duplicate!</strong><br>
+                        ${result.message}<br>
+                        <div class="duplicate-info">
+                            <strong>Existing Record:</strong><br>
+                            ID: ${record.id}<br>
+                            Name: ${record.name}<br>
+                            Status: ${record.verified ? '✅ VERIFIED' : '❌ UNVERIFIED'}
+                        </div>
+                    `;
+                    submitBtn.disabled = true;
+                } else if (result.status === 'invalid') {
+                    // VALIDATION FAILED
+                    messageBox.className = 'message-box error';
+                    messageBox.innerHTML = '<strong>❌ Failed:</strong><br>' + result.errors.join('<br>');
+                    submitBtn.disabled = false;
+                } else {
+                    messageBox.className = 'message-box error';
+                    messageBox.innerHTML = '<strong>⚠️ Unexpected response</strong><br>Please try again.';
+                    submitBtn.disabled = false;
+                }
+            } catch (error) {
+                messageBox.style.display = 'block';
+                messageBox.className = 'message-box error';
+                messageBox.innerHTML = '<strong>Error:</strong> ' + error.message;
+                submitBtn.disabled = false;
+            }
+        });
+
+        async function loadStats() {
+            try {
+                const response = await fetch('/api/stats');
+                const stats = await response.json();
+                document.getElementById('totalEntries').textContent = stats.total_entries;
+                document.getElementById('uniqueEntries').textContent = stats.unique_entries;
+                document.getElementById('efficiency').textContent = stats.efficiency;
+            } catch (error) {
+                console.error('Error loading stats:', error);
+            }
+        }
+
+        async function loadData() {
+            try {
+                const response = await fetch('/api/data');
+                const result = await response.json();
+                const dataList = document.getElementById('dataList');
+
+                if (result.count === 0) {
+                    dataList.innerHTML = '<p class="empty-state">No entries yet. Add your first entry!</p>';
+                } else {
+                    dataList.innerHTML = result.data.map(entry => `
+                        <div class="data-card">
+                            <div class="data-header">
+                                <span class="data-id">ID: ${entry.id}</span>
+                                <span class="data-status ${entry.verified ? 'verified' : 'unverified'}">
+                                    ${entry.verified ? '✅ VERIFIED' : '❌ UNVERIFIED'}
+                                </span>
+                            </div>
+                            <div class="data-body">
+                                <p><strong>Name:</strong> ${entry.name}</p>
+                                <p><strong>Email:</strong> ${entry.email}</p>
+                                <p><strong>Phone:</strong> ${entry.phone}</p>
+                                ${entry.address ? `<p><strong>Address:</strong> ${entry.address}</p>` : ''}
+                                ${entry.company ? `<p><strong>Company:</strong> ${entry.company}</p>` : ''}
+                            </div>
+                            <div class="data-footer">
+                                <small>Added: ${new Date(entry.timestamp).toLocaleString()}</small>
+                            </div>
+                        </div>
+                    `).join('');
+                }
+            } catch (error) {
+                console.error('Error loading data:', error);
+            }
+        }
+
+        async function clearDatabase() {
+            if (!confirm('Are you sure you want to clear all data? This cannot be undone.')) return;
+
+            try {
+                const response = await fetch('/api/clear', { method: 'POST' });
+                const result = await response.json();
+                
+                if (result.success) {
+                    alert(result.message);
+                    loadStats();
+                    loadData();
+                    document.getElementById('messageBox').style.display = 'none';
+                    document.getElementById('submitBtn').disabled = false;
+                } else {
+                    alert('Error: ' + result.error);
+                }
+            } catch (error) {
+                alert('Error clearing database: ' + error.message);
+            }
+        }
+
+        // Re-enable submit button when form changes
+        document.getElementById('dataForm').addEventListener('input', () => {
+            document.getElementById('submitBtn').disabled = false;
+        });
+    </script>
+</body>
+</html>
