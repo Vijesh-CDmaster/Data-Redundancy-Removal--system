@@ -1,41 +1,60 @@
 from flask import Flask, render_template, request, jsonify
 from datetime import datetime
-import hashlib
-import json
 import re
 from pymongo import MongoClient, ASCENDING
-from pymongo.errors import DuplicateKeyError
+from pymongo.errors import DuplicateKeyError, ServerSelectionTimeoutError
+import traceback
 
 app = Flask(__name__)
 
-# MongoDB Connection
+# MongoDB Connection with timeout
 MONGO_URI = "mongodb+srv://viju7122006:viju7122006@cluster0.y0xsnbk.mongodb.net/?appName=Cluster0"
-client = MongoClient(MONGO_URI)
-db = client['redundancy_system']
-data_collection = db['entries']
 
-# Create compound unique index on normalized email and phone
-# This prevents duplicates at database level
-data_collection.create_index([("normalized_email", ASCENDING)], unique=True, sparse=True)
-data_collection.create_index([("normalized_phone", ASCENDING)], unique=True, sparse=True)
-data_collection.create_index([("timestamp", ASCENDING)])
+try:
+    client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+    # Test connection
+    client.admin.command('ping')
+    print("✅ MongoDB connected successfully")
+    
+    db = client['redundancy_system']
+    users_collection = db['users']
+    
+    # Create unique indexes on email and phone
+    try:
+        users_collection.create_index([("email", ASCENDING)], unique=True, sparse=True)
+        users_collection.create_index([("phone", ASCENDING)], unique=True, sparse=True)
+        print("✅ Unique indexes created successfully")
+    except Exception as e:
+        print(f"⚠️ Index creation: {e}")
+        
+except ServerSelectionTimeoutError as e:
+    print(f"❌ MongoDB connection failed: {e}")
+    print("⚠️ Make sure your IP is whitelisted in MongoDB Atlas")
+    client = None
+except Exception as e:
+    print(f"❌ MongoDB error: {e}")
+    client = None
+
+# Track attempts for metrics
+attempts_collection = db['attempts'] if client else None
 
 def normalize_email(email):
-    """Normalize email: lowercase and trim whitespace"""
+    """Normalize email: lowercase + strip"""
     if not email:
         return None
     return email.strip().lower()
 
 def normalize_phone(phone):
-    """Normalize phone: remove all non-digit characters except leading +"""
+    """Normalize phone: digits only"""
     if not phone:
         return None
-    # Keep only digits and leading +
-    cleaned = re.sub(r'[^\d+]', '', phone)
-    # If it starts with +, keep it, otherwise just digits
-    if cleaned.startswith('+'):
-        return '+' + re.sub(r'\D', '', cleaned[1:])
-    return re.sub(r'\D', '', cleaned)
+    return re.sub(r'\D', '', phone)
+
+def normalize_name(name):
+    """Normalize name: strip whitespace"""
+    if not name:
+        return None
+    return name.strip()
 
 def validate_email(email):
     """Validate email format"""
@@ -45,270 +64,202 @@ def validate_email(email):
     return re.match(pattern, email.strip()) is not None
 
 def validate_phone(phone):
-    """Validate phone number format (10-15 digits)"""
+    """Validate phone format (10-15 digits)"""
     if not phone:
         return False
-    normalized = normalize_phone(phone)
-    # Check if it has 10-15 digits
-    digit_count = len(re.sub(r'\D', '', normalized))
-    return 10 <= digit_count <= 15
-
-def sanitize_input(data):
-    """Sanitize and trim all input fields"""
-    sanitized = {}
-    for key, value in data.items():
-        if isinstance(value, str):
-            sanitized[key] = value.strip()
-        else:
-            sanitized[key] = value
-    return sanitized
-
-def check_duplicate(email, phone):
-    """
-    Check if a record with the same email OR phone already exists.
-    Returns the existing record if found, None otherwise.
-    """
-    normalized_email = normalize_email(email)
-    normalized_phone = normalize_phone(phone)
-    
-    # Check for duplicate by email OR phone
-    query = {
-        '$or': [
-            {'normalized_email': normalized_email} if normalized_email else {},
-            {'normalized_phone': normalized_phone} if normalized_phone else {}
-        ]
-    }
-    
-    # Remove empty dictionaries from query
-    query['$or'] = [q for q in query['$or'] if q]
-    
-    if not query['$or']:
-        return None
-    
-    existing = data_collection.find_one(query)
-    return existing
+    digits = re.sub(r'\D', '', phone)
+    return 10 <= len(digits) <= 15
 
 @app.route('/')
 def index():
     return render_template('index.html')
 
-@app.route('/api/validate', methods=['POST'])
-def validate_data():
-    """
-    BACKEND VALIDATION - Single source of truth
-    Validates data and checks for duplicates
-    Returns detailed status for frontend display
-    """
-    try:
-        data = request.json
-        errors = []
-        
-        # Sanitize inputs
-        data = sanitize_input(data)
-        
-        # Check required fields
-        if not data.get('name'):
-            errors.append("Name is required")
-        if not data.get('email'):
-            errors.append("Email is required")
-        if not data.get('phone'):
-            errors.append("Phone number is required")
-        
-        # Validate email format
-        if data.get('email') and not validate_email(data['email']):
-            errors.append("Invalid email format")
-        
-        # Validate phone format
-        if data.get('phone') and not validate_phone(data['phone']):
-            errors.append("Invalid phone number format (10-15 digits required)")
-        
-        # Return validation errors if any
-        if errors:
-            return jsonify({
-                'status': 'invalid',
-                'valid': False,
-                'errors': errors
-            }), 400
-        
-        # Check for duplicates (BACKEND CHECK)
-        existing = check_duplicate(data['email'], data['phone'])
-        
-        if existing:
-            # Duplicate found - return existing record
-            return jsonify({
-                'status': 'duplicate',
-                'valid': False,
-                'message': 'A record with this email or phone number already exists',
-                'duplicate_record': {
-                    'id': existing['entry_id'],
-                    'name': existing['data']['name'],
-                    'email': existing['data']['email'],
-                    'phone': existing['data']['phone'],
-                    'timestamp': existing['timestamp'],
-                    'verified': existing.get('verified', False)
-                }
-            }), 200
-        
-        # No duplicate - validation passed
-        return jsonify({
-            'status': 'unique',
-            'valid': True,
-            'message': 'Data is unique and valid. Ready to insert.'
-        }), 200
-        
-    except Exception as e:
-        return jsonify({
-            'status': 'error',
-            'valid': False,
-            'errors': [f"Server error: {str(e)}"]
-        }), 500
-
 @app.route('/api/add', methods=['POST'])
 def add_data():
     """
-    ADD DATA - Backend controls insertion
-    Only inserts if no duplicate exists
-    Returns created or existing record
+    MAIN ENDPOINT - Add data with duplicate prevention
+    Backend is single source of truth
     """
     try:
+        # Check MongoDB connection
+        if not client:
+            return jsonify({
+                'status': 'error',
+                'success': False,
+                'errors': ['Database connection failed. Please check MongoDB Atlas configuration.']
+            }), 500
+        
         data = request.json
+        print(f"📝 Received data: {data}")
+        
+        # Track attempt
+        try:
+            attempts_collection.insert_one({
+                'timestamp': datetime.utcnow().isoformat(),
+                'data': data
+            })
+        except Exception as e:
+            print(f"⚠️ Failed to track attempt: {e}")
+        
+        # Normalize inputs
+        normalized_email = normalize_email(data.get('email'))
+        normalized_phone = normalize_phone(data.get('phone'))
+        normalized_name = normalize_name(data.get('name'))
+        
+        print(f"✨ Normalized - Email: {normalized_email}, Phone: {normalized_phone}")
+        
+        # Validation
         errors = []
-        
-        # Sanitize inputs
-        data = sanitize_input(data)
-        
-        # Validate required fields
-        if not data.get('name'):
+        if not normalized_name:
             errors.append("Name is required")
-        if not data.get('email'):
+        if not normalized_email:
             errors.append("Email is required")
-        if not data.get('phone'):
-            errors.append("Phone number is required")
-        
-        # Validate formats
-        if data.get('email') and not validate_email(data['email']):
+        elif not validate_email(normalized_email):
             errors.append("Invalid email format")
-        if data.get('phone') and not validate_phone(data['phone']):
-            errors.append("Invalid phone number format")
+        if not normalized_phone:
+            errors.append("Phone is required")
+        elif not validate_phone(normalized_phone):
+            errors.append("Invalid phone format (10-15 digits required)")
         
         if errors:
+            print(f"❌ Validation errors: {errors}")
             return jsonify({
                 'status': 'invalid',
                 'success': False,
                 'errors': errors
             }), 400
         
-        # CRITICAL: Check for duplicates BEFORE inserting
-        existing = check_duplicate(data['email'], data['phone'])
+        # Check for duplicate using MongoDB query
+        print(f"🔍 Checking for duplicates...")
+        existing = users_collection.find_one({
+            "$or": [
+                {"email": normalized_email},
+                {"phone": normalized_phone}
+            ]
+        })
         
         if existing:
-            # Duplicate exists - DO NOT INSERT
-            # Return the existing record instead
+            # DUPLICATE FOUND
+            print(f"⚠️ Duplicate found: {existing.get('email')} / {existing.get('phone')}")
             return jsonify({
                 'status': 'duplicate',
                 'success': False,
-                'message': 'Record already exists. No new entry created.',
+                'message': 'A record with this email or phone already exists',
                 'record': {
-                    'id': existing['entry_id'],
-                    'name': existing['data']['name'],
-                    'email': existing['data']['email'],
-                    'phone': existing['data']['phone'],
-                    'address': existing['data'].get('address', ''),
-                    'company': existing['data'].get('company', ''),
+                    'id': str(existing['_id']),
+                    'name': existing['name'],
+                    'email': existing['email'],
+                    'phone': existing['phone'],
+                    'address': existing.get('address', ''),
+                    'company': existing.get('company', ''),
                     'timestamp': existing['timestamp'],
                     'verified': existing.get('verified', False)
                 }
             }), 200
         
-        # No duplicate - proceed with insertion
-        normalized_email = normalize_email(data['email'])
-        normalized_phone = normalize_phone(data['phone'])
-        
-        # Get next sequential ID
-        last_entry = data_collection.find_one(sort=[("entry_id", -1)])
-        next_id = (last_entry['entry_id'] + 1) if last_entry else 1
-        
-        # Create new entry
-        entry = {
-            'entry_id': next_id,
-            'data': {
-                'name': data['name'],
-                'email': data['email'],
-                'phone': data['phone'],
-                'address': data.get('address', ''),
-                'company': data.get('company', '')
-            },
-            'normalized_email': normalized_email,
-            'normalized_phone': normalized_phone,
+        # NO DUPLICATE - Insert new record
+        print(f"✅ No duplicate found. Inserting new record...")
+        new_document = {
+            'name': normalized_name,
+            'email': normalized_email,
+            'phone': normalized_phone,
+            'address': data.get('address', '').strip(),
+            'company': data.get('company', '').strip(),
             'timestamp': datetime.utcnow().isoformat(),
-            'verified': True  # Only backend sets this
+            'verified': True
         }
         
-        # Insert into database
-        result = data_collection.insert_one(entry)
-        
-        # Return the newly created record
-        return jsonify({
-            'status': 'created',
-            'success': True,
-            'message': 'New record created successfully',
-            'record': {
-                'id': entry['entry_id'],
-                'name': entry['data']['name'],
-                'email': entry['data']['email'],
-                'phone': entry['data']['phone'],
-                'address': entry['data'].get('address', ''),
-                'company': entry['data'].get('company', ''),
-                'timestamp': entry['timestamp'],
-                'verified': entry['verified']
-            }
-        }), 201
-        
-    except DuplicateKeyError:
-        # Database-level duplicate constraint triggered
-        existing = check_duplicate(data['email'], data['phone'])
-        return jsonify({
-            'status': 'duplicate',
-            'success': False,
-            'message': 'Duplicate detected by database constraint',
-            'record': {
-                'id': existing['entry_id'] if existing else None,
-                'verified': existing.get('verified', False) if existing else False
-            }
-        }), 200
-        
+        try:
+            result = users_collection.insert_one(new_document)
+            inserted_id = str(result.inserted_id)
+            print(f"✅ Record inserted successfully: {inserted_id}")
+            
+            return jsonify({
+                'status': 'created',
+                'success': True,
+                'message': 'New record created successfully',
+                'record': {
+                    'id': inserted_id,
+                    'name': new_document['name'],
+                    'email': new_document['email'],
+                    'phone': new_document['phone'],
+                    'address': new_document['address'],
+                    'company': new_document['company'],
+                    'timestamp': new_document['timestamp'],
+                    'verified': new_document['verified']
+                }
+            }), 201
+            
+        except DuplicateKeyError as e:
+            print(f"⚠️ Database duplicate key error: {e}")
+            # Fetch the actual existing document
+            existing = users_collection.find_one({
+                "$or": [
+                    {"email": normalized_email},
+                    {"phone": normalized_phone}
+                ]
+            })
+            
+            if existing:
+                return jsonify({
+                    'status': 'duplicate',
+                    'success': False,
+                    'message': 'Duplicate detected by database constraint',
+                    'record': {
+                        'id': str(existing['_id']),
+                        'name': existing['name'],
+                        'email': existing['email'],
+                        'phone': existing['phone'],
+                        'address': existing.get('address', ''),
+                        'company': existing.get('company', ''),
+                        'timestamp': existing['timestamp'],
+                        'verified': existing.get('verified', False)
+                    }
+                }), 200
+                
     except Exception as e:
+        error_trace = traceback.format_exc()
+        print(f"❌ Server error: {e}")
+        print(f"Traceback: {error_trace}")
         return jsonify({
             'status': 'error',
             'success': False,
-            'errors': [f"Database error: {str(e)}"]
+            'errors': [f"Server error: {str(e)}"]
         }), 500
 
 @app.route('/api/data', methods=['GET'])
 def get_data():
-    """Retrieve all stored data from MongoDB"""
+    """Retrieve all verified records from MongoDB"""
     try:
-        entries = list(data_collection.find().sort("timestamp", -1).limit(100))
+        if not client:
+            return jsonify({
+                'count': 0,
+                'data': [],
+                'error': 'Database not connected'
+            })
+            
+        # Get only verified records
+        records = list(users_collection.find({'verified': True}).sort("timestamp", -1).limit(100))
         
-        # Format response
-        formatted_entries = []
-        for entry in entries:
-            formatted_entries.append({
-                'id': entry['entry_id'],
-                'name': entry['data']['name'],
-                'email': entry['data']['email'],
-                'phone': entry['data']['phone'],
-                'address': entry['data'].get('address', ''),
-                'company': entry['data'].get('company', ''),
-                'timestamp': entry['timestamp'],
-                'verified': entry.get('verified', False)
+        formatted_records = []
+        for record in records:
+            formatted_records.append({
+                'id': str(record['_id']),
+                'name': record['name'],
+                'email': record['email'],
+                'phone': record['phone'],
+                'address': record.get('address', ''),
+                'company': record.get('company', ''),
+                'timestamp': record['timestamp'],
+                'verified': record.get('verified', False)
             })
         
         return jsonify({
-            'count': len(formatted_entries),
-            'data': formatted_entries
+            'count': len(formatted_records),
+            'data': formatted_records
         })
     except Exception as e:
+        print(f"❌ Error loading data: {e}")
         return jsonify({
             'count': 0,
             'data': [],
@@ -317,21 +268,43 @@ def get_data():
 
 @app.route('/api/stats', methods=['GET'])
 def get_stats():
-    """Get database statistics"""
+    """
+    Get accurate statistics
+    - Total attempts (all POST requests)
+    - Unique entries (successful inserts)
+    - Efficiency = (unique / attempts) * 100
+    """
     try:
-        total_entries = data_collection.count_documents({})
-        verified_entries = data_collection.count_documents({'verified': True})
+        if not client:
+            return jsonify({
+                'total_attempts': 0,
+                'unique_entries': 0,
+                'efficiency': '100%',
+                'duplicates_prevented': 0,
+                'error': 'Database not connected'
+            })
+            
+        total_attempts = attempts_collection.count_documents({})
+        unique_entries = users_collection.count_documents({'verified': True})
+        
+        if total_attempts == 0:
+            efficiency = 100.0
+        else:
+            efficiency = (unique_entries / total_attempts) * 100
         
         return jsonify({
-            'total_entries': total_entries,
-            'unique_entries': verified_entries,
-            'efficiency': f"{(verified_entries/max(total_entries, 1)*100):.1f}%"
+            'total_attempts': total_attempts,
+            'unique_entries': unique_entries,
+            'efficiency': f"{efficiency:.1f}%",
+            'duplicates_prevented': total_attempts - unique_entries
         })
     except Exception as e:
+        print(f"❌ Error loading stats: {e}")
         return jsonify({
-            'total_entries': 0,
+            'total_attempts': 0,
             'unique_entries': 0,
             'efficiency': '100%',
+            'duplicates_prevented': 0,
             'error': str(e)
         })
 
@@ -339,16 +312,49 @@ def get_stats():
 def clear_data():
     """Clear all data (testing only)"""
     try:
-        result = data_collection.delete_many({})
+        if not client:
+            return jsonify({
+                'success': False,
+                'error': 'Database not connected'
+            })
+            
+        users_result = users_collection.delete_many({})
+        attempts_result = attempts_collection.delete_many({})
+        print(f"🗑️ Database cleared: {users_result.deleted_count} users, {attempts_result.deleted_count} attempts")
         return jsonify({
             'success': True,
-            'message': f'Database cleared. {result.deleted_count} entries removed.'
+            'message': f'Database cleared. {users_result.deleted_count} users and {attempts_result.deleted_count} attempts removed.'
         })
     except Exception as e:
+        print(f"❌ Error clearing database: {e}")
         return jsonify({
             'success': False,
             'error': str(e)
         })
+
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    """Health check endpoint"""
+    try:
+        if client:
+            client.admin.command('ping')
+            return jsonify({
+                'status': 'healthy',
+                'database': 'connected',
+                'message': 'System operational'
+            })
+        else:
+            return jsonify({
+                'status': 'unhealthy',
+                'database': 'disconnected',
+                'message': 'MongoDB connection failed'
+            }), 503
+    except Exception as e:
+        return jsonify({
+            'status': 'unhealthy',
+            'database': 'error',
+            'message': str(e)
+        }), 503
 
 if __name__ == '__main__':
     app.run(debug=True)
